@@ -15,8 +15,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Edit, Eye, MessageCircle, Plus, Printer, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
+import {
+  Download,
+  Edit,
+  Eye,
+  MessageCircle,
+  Plus,
+  Printer,
+  Trash2,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import {
   formatCurrency,
   formatDate,
@@ -60,6 +70,8 @@ export default function Sales({ currentUser }: Props) {
   const [editSale, setEditSale] = useState<Sale | null>(null);
   const [finishInvoiceOpen, setFinishInvoiceOpen] = useState(false);
   const [finishedSale, setFinishedSale] = useState<Sale | null>(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const invoiceRef = useRef<HTMLDivElement>(null);
 
   const emptyForm = {
     customerName: "",
@@ -195,13 +207,14 @@ export default function Sales({ currentUser }: Props) {
   };
 
   const sendWhatsApp = (s: Sale) => {
-    const { whatsappNumber, whatsappTemplate } = data.settings;
+    const { whatsappTemplate } = data.settings;
+    const phone = s.customerPhone.replace(/\D/g, "");
     const msg = whatsappTemplate
       .replace("{Customer Name}", s.customerName)
       .replace("{Amount}", formatCurrency(s.totalAmount))
-      .replace("{Phone Number}", whatsappNumber);
+      .replace("{Phone Number}", "7907012515");
     window.open(
-      `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(msg)}`,
+      `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`,
       "_blank",
     );
   };
@@ -220,13 +233,43 @@ export default function Sales({ currentUser }: Props) {
     setFinishInvoiceOpen(true);
   };
 
-  const sendWhatsAppToCustomer = (s: Sale) => {
-    const phone = s.customerPhone.replace(/\D/g, "");
-    const msg = `Dear ${s.customerName}, your bill for Room ${s.roomNumber} is ready.\nCheck-in: ${formatDate(s.checkInDate)} | Check-out: ${formatDate(s.checkOutDate)}\nTotal Amount: ₹${s.totalAmount}\nBalance: ₹${s.balanceAmount}\nThank you for staying at Century Rooms!`;
-    window.open(
-      `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`,
-      "_blank",
-    );
+  const handleDownloadAndWhatsApp = async (s: Sale) => {
+    if (!invoiceRef.current) return;
+    // Open blank window immediately (synchronous, direct user gesture)
+    const waWindow = window.open("", "_blank");
+    setPdfGenerating(true);
+    try {
+      const canvas = await html2canvas(invoiceRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth - 20;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const yPos =
+        imgHeight < pageHeight - 20 ? (pageHeight - imgHeight) / 2 : 10;
+      pdf.addImage(
+        imgData,
+        "PNG",
+        10,
+        yPos,
+        imgWidth,
+        Math.min(imgHeight, pageHeight - 20),
+      );
+      const invoiceNo = String(s.invoiceNumber).padStart(4, "0");
+      pdf.save(`invoice-${invoiceNo}.pdf`);
+      const phone = s.customerPhone.replace(/\D/g, "");
+      const msg = `Dear ${s.customerName}, please find your Century Rooms invoice #${invoiceNo} attached. Total: ₹${s.totalAmount}. For queries call 7907012515. Thank you for your stay!`;
+      if (waWindow) {
+        waWindow.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+      }
+    } finally {
+      setPdfGenerating(false);
+    }
   };
 
   return (
@@ -678,7 +721,11 @@ export default function Sales({ currentUser }: Props) {
           </DialogHeader>
           {finishedSale && (
             <div>
-              <InvoiceTemplate sale={finishedSale} data={data} />
+              <InvoiceTemplate
+                ref={invoiceRef}
+                sale={finishedSale}
+                data={data}
+              />
               <div className="flex justify-end gap-2 mt-4 flex-wrap">
                 <Button
                   variant="outline"
@@ -695,12 +742,17 @@ export default function Sales({ currentUser }: Props) {
                   <Printer size={16} /> Print
                 </Button>
                 <Button
-                  onClick={() => sendWhatsAppToCustomer(finishedSale)}
+                  onClick={() => handleDownloadAndWhatsApp(finishedSale)}
+                  disabled={pdfGenerating}
                   className="gap-2"
                   style={{ background: "#25D366", color: "white" }}
                   data-ocid="sales.finish_whatsapp.button"
                 >
-                  <MessageCircle size={16} /> Send to Customer via WhatsApp
+                  <Download size={16} />
+                  <MessageCircle size={16} />
+                  {pdfGenerating
+                    ? "Generating..."
+                    : "Download PDF & Send WhatsApp"}
                 </Button>
               </div>
             </div>
